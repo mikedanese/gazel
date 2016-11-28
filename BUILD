@@ -8,7 +8,10 @@ load(
     "go_library",
     "go_test",
     "cgo_library",
+    "go_prefix",
 )
+
+go_prefix("github.com/mikedanese/gazel")
 
 go_binary(
     name = "gazel",
@@ -18,7 +21,7 @@ go_binary(
     ],
     tags = ["automanaged"],
     deps = [
-        "///third_party/go/path/filepath:go_default_library",
+        "//third_party/go/path/filepath:go_default_library",
         "//vendor:github.com/bazelbuild/buildifier/core",
         "//vendor:github.com/golang/glog",
     ],
