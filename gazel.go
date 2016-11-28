@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/mikedanese/gazel/third_party/go/path/filepath"
 
@@ -57,6 +58,8 @@ func main() {
 
 type Venderor struct {
 	ctx          *build.Context
+	icacheGuard  sync.RWMutex
+	icache       map[icacheKey]icacheVal
 	skippedPaths []*regexp.Regexp
 	dryRun       bool
 	root         string
@@ -73,6 +76,7 @@ func NewVenderor(root, cfgPath string, dryRun bool) (*Venderor, error) {
 		ctx:    context(),
 		dryRun: dryRun,
 		root:   root,
+		icache: map[icacheKey]icacheVal{},
 		cfg:    cfg,
 	}
 
@@ -91,6 +95,33 @@ func NewVenderor(root, cfgPath string, dryRun bool) (*Venderor, error) {
 	}
 
 	return &v, nil
+
+}
+
+type icacheKey struct {
+	path, srcDir string
+}
+
+type icacheVal struct {
+	pkg *build.Package
+	err error
+}
+
+func (v *Venderor) importPkg(path string, srcDir string) (*build.Package, error) {
+	k := icacheKey{path: path, srcDir: srcDir}
+	v.icacheGuard.RLock()
+	if val, ok := v.icache[k]; ok {
+		v.icacheGuard.RUnlock()
+		return val.pkg, val.err
+	}
+	v.icacheGuard.RUnlock()
+
+	// cache miss
+	pkg, err := v.ctx.Import(path, srcDir, build.ImportComment)
+	v.icacheGuard.Lock()
+	defer v.icacheGuard.Unlock()
+	v.icache[k] = icacheVal{pkg: pkg, err: err}
+	return pkg, err
 
 }
 
@@ -166,7 +197,7 @@ func (v *Venderor) walk(root string, f func(path, ipath string, pkg *build.Packa
 		if !info.IsDir() {
 			return nil
 		}
-		pkg, err := v.ctx.ImportDir(filepath.Join(v.root, path), build.ImportComment)
+		pkg, err := v.importPkg(".", filepath.Join(v.root, path))
 		if err != nil {
 			if _, ok := err.(*build.NoGoError); err != nil && ok {
 				return nil
@@ -189,7 +220,7 @@ func (v *Venderor) walkRepo() error {
 }
 
 func (v *Venderor) updateSinglePkg(path string) error {
-	pkg, err := v.ctx.ImportDir("./"+path, build.ImportComment)
+	pkg, err := v.importPkg(".", "./"+path)
 	if err != nil {
 		if _, ok := err.(*build.NoGoError); err != nil && ok {
 			return nil
@@ -314,7 +345,7 @@ func (v *Venderor) extractDeps(deps []string) *bzl.ListExpr {
 		apply(
 			merge(deps),
 			filterer(func(s string) bool {
-				pkg, err := v.ctx.Import(s, v.root, build.ImportComment)
+				pkg, err := v.importPkg(s, v.root)
 				if err != nil {
 					if strings.Contains(err.Error(), `cannot find package "C"`) ||
 						// added in go1.7
