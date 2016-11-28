@@ -26,9 +26,15 @@ func main() {
 		root    = flag.String("root", "", "root of go source")
 		dryRun  = flag.Bool("dry-run", false, "run in dry mode")
 		cfgPath = flag.String("cfg-path", ".gazelcfg.json", "path to gazel config (relative paths interpreted relative to -repo.")
+		prof    = flag.String("prof", "", "where to write the pprof profile")
 	)
 	flag.Parse()
 	flag.Set("alsologtostderr", "true")
+	if *prof != "" {
+		profiler := newProfiler(*prof)
+		profiler.Start()
+		defer profiler.Stop()
+	}
 	if *root == "" {
 		glog.Fatalf("-root argument is required")
 	}
