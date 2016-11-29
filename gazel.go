@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/mikedanese/gazel/third_party/go/path/filepath"
@@ -130,11 +131,6 @@ func writeHeaders(file *bzl.File) {
 				X: &bzl.LiteralExpr{Token: "load"},
 				List: asExpr([]string{
 					"@io_bazel_rules_go//go:def.bzl",
-					"go_binary",
-					"go_library",
-					"go_test",
-					"cgo_library",
-					"cgo_genrule",
 				}).(*bzl.ListExpr).List,
 			},
 		}...,
@@ -513,6 +509,7 @@ func ReconcileRules(path string, rules []*bzl.Rule, dryRun bool) (bool, error) {
 	if err != nil && os.IsNotExist(err) {
 		f := &bzl.File{}
 		writeHeaders(f)
+		reconcileLoad(f, rules)
 		writeRules(f, rules)
 		return writeFile(path, f, false, dryRun)
 	} else if err != nil {
@@ -554,6 +551,9 @@ func ReconcileRules(path string, rules []*bzl.Rule, dryRun bool) (bool, error) {
 		reconcileAttr(o, r, "library")
 		delete(oldRules, r.Name())
 	}
+
+	reconcileLoad(f, rules)
+
 	for _, r := range oldRules {
 		if !RuleIsManaged(r) {
 			continue
@@ -561,6 +561,34 @@ func ReconcileRules(path string, rules []*bzl.Rule, dryRun bool) (bool, error) {
 		f.DelRules(r.Kind(), r.Name())
 	}
 	return writeFile(path, f, true, dryRun)
+}
+
+func reconcileLoad(f *bzl.File, rules []*bzl.Rule) {
+	usedRuleKindsMap := map[string]bool{}
+	for _, r := range rules {
+		usedRuleKindsMap[r.Kind()] = true
+	}
+
+	usedRuleKindsList := []string{}
+	for k, _ := range usedRuleKindsMap {
+		usedRuleKindsList = append(usedRuleKindsList, k)
+	}
+	sort.Strings(usedRuleKindsList)
+
+	for _, r := range f.Rules("load") {
+		const goRulesLabel = "@io_bazel_rules_go//go:def.bzl"
+		args := bzl.Strings(&bzl.ListExpr{List: r.Call.List})
+		if len(args) == 0 {
+			continue
+		}
+		if args[0] != goRulesLabel {
+			continue
+		}
+		r.Call.List = asExpr(append(
+			[]string{goRulesLabel}, usedRuleKindsList...,
+		)).(*bzl.ListExpr).List
+		break
+	}
 }
 
 func RuleIsManaged(r *bzl.Rule) bool {
