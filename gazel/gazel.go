@@ -56,9 +56,6 @@ func main() {
 	if err := v.walkRepo(); err != nil {
 		glog.Fatalf("err walking repo: %v", err)
 	}
-	if err := v.walkGenerated(); err != nil {
-		glog.Fatalf("err walking generated: %v", err)
-	}
 	if _, err := v.walkSource("."); err != nil {
 		glog.Fatalf("err walking source: %v", err)
 	}
@@ -73,7 +70,7 @@ func main() {
 }
 
 type Vendorer struct {
-	ctx          *build.Context
+	ctx          *buildCtx
 	icache       map[icacheKey]icacheVal
 	skippedPaths []*regexp.Regexp
 	dryRun       bool
@@ -739,16 +736,56 @@ func writeFile(path string, f *bzl.File, exists, dryRun bool) (bool, error) {
 	return werr == nil, werr
 }
 
-func context() *build.Context {
-	return &build.Context{
-		GOARCH:      "amd64",
-		GOOS:        "linux",
-		GOROOT:      build.Default.GOROOT,
-		GOPATH:      build.Default.GOPATH,
-		ReleaseTags: []string{"go1.1", "go1.2", "go1.3", "go1.4", "go1.5", "go1.6", "go1.7", "go1.8"},
-		Compiler:    runtime.Compiler,
-		CgoEnabled:  true,
+func context() *buildCtx {
+	var ctx buildCtx
+	for _, goarch := range []string{"amd64"} {
+		for _, goos := range []string{"linux"} {
+			ctx.ctxs = append(ctx.ctxs, &build.Context{
+				GOARCH:      goarch,
+				GOOS:        goos,
+				GOROOT:      build.Default.GOROOT,
+				GOPATH:      build.Default.GOPATH,
+				ReleaseTags: []string{"go1.1", "go1.2", "go1.3", "go1.4", "go1.5", "go1.6", "go1.7", "go1.8"},
+				Compiler:    runtime.Compiler,
+				CgoEnabled:  true,
+			})
+		}
 	}
+	return &ctx
+}
+
+type buildCtx struct {
+	ctxs []*build.Context
+}
+
+func (c *buildCtx) Import(path string, dir string, mode build.ImportMode) (*build.Package, error) {
+	var pkg build.Package
+	for _, ctx := range c.ctxs {
+		pkgg, err := ctx.Import(path, dir, mode)
+		if err != nil {
+			continue
+		}
+		pkg.Dir = pkgg.Dir
+		pkg.Name = pkgg.Name
+		pkg.ImportPath = pkgg.ImportPath
+		pkg.Root = pkgg.Root
+		pkg.Goroot = pkgg.Goroot
+		pkg.GoFiles = append(pkg.GoFiles, pkgg.GoFiles...)
+		pkg.CgoFiles = append(pkg.CgoFiles, pkgg.CgoFiles...)
+		pkg.CFiles = append(pkg.CFiles, pkgg.CFiles...)
+		pkg.CXXFiles = append(pkg.CXXFiles, pkgg.CXXFiles...)
+		pkg.HFiles = append(pkg.HFiles, pkgg.HFiles...)
+		pkg.Imports = append(pkg.Imports, pkgg.Imports...)
+		pkg.TestGoFiles = append(pkg.TestGoFiles, pkgg.TestGoFiles...)
+		pkg.TestImports = append(pkg.TestImports, pkgg.TestImports...)
+		pkg.XTestGoFiles = append(pkg.XTestGoFiles, pkgg.XTestGoFiles...)
+		pkg.XTestImports = append(pkg.XTestImports, pkgg.XTestImports...)
+	}
+	return &pkg, nil
+}
+
+func (c *buildCtx) ImportDir(dir string, mode build.ImportMode) (*build.Package, error) {
+	return c.Import(".", dir, mode)
 }
 
 func walk(root string, walkFn filepath.WalkFunc) error {
